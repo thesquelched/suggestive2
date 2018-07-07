@@ -2,20 +2,14 @@ import asyncio
 import urwid
 import argparse
 import logging
-import importlib
-import inspect
-import os.path
 import weakref
 import functools
-import traceback
-import sys
-from collections import ChainMap
-from typing import List, Optional, NamedTuple, Tuple, Dict, Callable, Union
+from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any
+from mpd.asyncio import MPDClient
 
 from suggestive2.monkey import monkeypatch
 from suggestive2 import mpd
 from suggestive2.types import Config
-from suggestive2.util import expand
 import suggestive2.config as default_config
 
 
@@ -34,7 +28,7 @@ class Palette(NamedTuple):
 
 class SimpleText(urwid.WidgetWrap):
 
-    def __init__(self, text: str):
+    def __init__(self, text: str) -> None:
         widget = urwid.Filler(urwid.Text(text), 'top')
         super().__init__(widget)
 
@@ -48,7 +42,7 @@ class CommandPrompt(urwid.Edit):
         self.set_caption('')
         self.set_edit_text('')
 
-    def start(self, caption: str=': '):
+    def start(self, caption: str = ': '):
         self.set_caption(caption)
 
     def keypress(self, size, key: str):
@@ -90,8 +84,8 @@ class Library(VimListBox):
 
 class PlaylistTrack(urwid.WidgetWrap):
 
-    def __init__(self, mpd_id: Union[str, int], artist: str, album: str, track: str):
-        self.mpd_id: int =  int(mpd_id)
+    def __init__(self, mpd_id: Union[str, int], artist: str, album: str, track: str) -> None:
+        self.mpd_id: int = int(mpd_id)
         self.artist = artist
         self.album = album
         self.track = track
@@ -126,6 +120,7 @@ class PlaylistTrack(urwid.WidgetWrap):
 #     'id': '49'
 # }
 
+
 class Playlist(VimListBox):
 
     def __init__(self):
@@ -151,7 +146,7 @@ class Playlist(VimListBox):
 
 class Pane(urwid.WidgetWrap):
 
-    def __init__(self, body: urwid.Widget, statusline: urwid.Widget):
+    def __init__(self, body: urwid.Widget, statusline: urwid.Widget) -> None:
         widget = urwid.Frame(
             body=body,
             footer=statusline,
@@ -161,7 +156,7 @@ class Pane(urwid.WidgetWrap):
 
 class Window(urwid.Columns):
 
-    def __init__(self, panes: List[Pane]):
+    def __init__(self, panes: List[Pane]) -> None:
         super().__init__(panes, dividechars=1)
 
     def keypress(self, size, key: str):
@@ -173,7 +168,7 @@ class Window(urwid.Columns):
 
 class TopLevel(urwid.WidgetWrap):
 
-    def __init__(self, body: urwid.Widget, header=urwid.Widget, footer=urwid.Widget):
+    def __init__(self, body: urwid.Widget, header=urwid.Widget, footer=urwid.Widget) -> None:
         widget = urwid.Frame(body=body, header=header, footer=footer)
         super().__init__(widget)
 
@@ -221,7 +216,7 @@ class Application(object):
         self.mainloop.screen.set_terminal_properties(colors=256)
         self.key_buffer: List[str] = []
 
-        self.buffer_sequences: Dict[Tuple[str], Callable[[], Any]] = {
+        self.buffer_sequences: Dict[Tuple[str, ...], Callable[[], Any]] = {
             ('Z', 'Z'): self.exit,
         }
         self.mpd: MPDClient = None
@@ -320,7 +315,7 @@ app = Application()
 
 def main(args=None):
     p = argparse.ArgumentParser(prog='suggestive2')
-    p.add_argument('--config', '-c', default=expand('~/.suggestive/config.py'),
+    p.add_argument('--config', '-c', default='$HOME/.suggestive/config.py',
                    help='Config file (default: $HOME/.suggestive/config.py)')
 
     args = p.parse_args(args)

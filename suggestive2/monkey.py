@@ -1,5 +1,4 @@
 import urwid
-import sys
 
 
 def _exception_handler(self, loop, context):

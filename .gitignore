@@ -12,7 +12,6 @@ installtest
 alembic.ini
 *.pyc
 venv
-.tox
 .coverage
 .cache
 Pipfile.lock

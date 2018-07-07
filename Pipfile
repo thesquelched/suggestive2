@@ -10,9 +10,10 @@ python-mpd2 = "<2.0.0"
 [dev-packages]
 pytest = "*"
 pytest-flakes = "*"
-pytest-pep8 = "*"
 pytest-cov = "*"
 pytest-mypy = "*"
+pytest-pythonpath = "*"
+pytest-codestyle = "*"
 
 [requires]
 python_version = "3.7.0"
