@@ -28,6 +28,7 @@ if __name__ == '__main__':
             ],
         },
         install_requires=[
-            'urwid>=2.0.1',
+            'urwid >= 2.0.1',
+            'python-mpd2 < 2.0.0',
         ],
     )

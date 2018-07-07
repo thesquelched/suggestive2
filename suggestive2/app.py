@@ -1,6 +1,19 @@
 import asyncio
 import urwid
+import argparse
+import logging
+import importlib
+import inspect
+import os.path
+from collections import ChainMap
 from typing import List, Optional, NamedTuple, Tuple, Dict, Callable
+
+from suggestive2.util import expand
+import suggestive2.config as default_config
+
+
+LOG = logging.getLogger('suggestive2')
+LOG.addHandler(logging.NullHandler())
 
 
 class Palette(NamedTuple):
@@ -122,15 +135,17 @@ def generate_palette() -> List[Tuple[str, str, str, str, str, str]]:
 class Application(object):
 
     def __init__(self):
+        self.config: Dict[str, ChainMap] = {}
         self.widgets: Dict[str, urwid.Widget] = dict()
-        self.loop = urwid.MainLoop(
+        self.loop = asyncio.get_event_loop()
+        self.mainloop = urwid.MainLoop(
             self.build(),
             palette=generate_palette(),
             handle_mouse=False,
             unhandled_input=self.unhandled_input,
-            event_loop=urwid.AsyncioEventLoop(loop=asyncio.get_event_loop()),
+            event_loop=urwid.AsyncioEventLoop(loop=self.loop),
         )
-        self.loop.screen.set_terminal_properties(colors=256)
+        self.mainloop.screen.set_terminal_properties(colors=256)
         self.key_buffer: List[str] = []
 
         self.buffer_sequences: Dict[Tuple[str], Callable[[], Any]] = {
@@ -191,13 +206,37 @@ class Application(object):
         )
 
     def run(self):
-        self.loop.run()
+        self.mainloop.run()
 
 
 app = Application()
 
 
-def main():
+def load_config(path):
+    defaults = {key: vars(value)
+                for key, value in inspect.getmembers(default_config, inspect.isclass)}
+
+    if os.path.isfile(path):
+        sys.path.insert(0, os.path.dirname(path))
+        config = import_module(os.path.splitext(os.path.basename(path))[0])
+
+        config_vals = {section: vars(getattr(config, section)) if hasattr(config, section) else {}
+                       for section in defaults}
+
+        return {section: ChainMap(config_vals[section], defaults[section])
+                for section in defaults}
+    else:
+        return defaults
+
+
+def main(args=None):
+    p = argparse.ArgumentParser(prog='suggestive2')
+    p.add_argument('--config', '-c', default=expand('~/.suggestive/config.py'),
+                   help='Config file (default: $HOME/.suggestive/config.py)')
+
+    args = p.parse_args(args)
+    app.config = load_config(args.config)
+
     app.run()
 
 
