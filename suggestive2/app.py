@@ -5,9 +5,15 @@ import logging
 import importlib
 import inspect
 import os.path
+import weakref
+import functools
+import traceback
+import sys
 from collections import ChainMap
 from typing import List, Optional, NamedTuple, Tuple, Dict, Callable
 
+from suggestive2 import mpd
+from suggestive2.types import Config
 from suggestive2.util import expand
 import suggestive2.config as default_config
 
@@ -63,7 +69,7 @@ class VimListBox(urwid.ListBox):
         return super().keypress(size, self.REMAP.get(key, key))
 
 
-class AlbumList(VimListBox):
+class Library(VimListBox):
 
     def __init__(self):
         albums = [
@@ -76,6 +82,65 @@ class AlbumList(VimListBox):
             for item in albums
         ])
         super().__init__(self._body)
+
+
+class PlaylistTrack(urwid.WidgetWrap):
+
+    def __init__(self, mpd_id: int, artist: str, album: str, track: str):
+        self.mpd_id =  mpd_id
+        self.artist = artist
+        self.album = album
+        self.track = track
+
+        widget = urwid.SelectableIcon(f'{artist} - {album} - {track}')
+        super().__init__(widget)
+
+    @classmethod
+    def from_mpd_info(cls, info):
+        return cls(
+            int(info['id']),
+            info['artist'],
+            info['album'],
+            info['title'],
+        )
+
+# {
+#     'file': 'The Black Angels/Phosphene Dream/05 River of Blood.mp3',
+#     'last-modified': '2016-09-17T19:04:18Z',
+#     'artist': 'The Black Angels',
+#     'album': 'Phosphene Dream',
+#     'albumartistsort': 'Black Angels, The',
+#     'title': 'River of Blood',
+#     'track': '5/10',
+#     'genre': 'Rock',
+#     'date': '2010-09-13',
+#     'disc': '1/1',
+#     'albumartist': 'The Black Angels',
+#     'time': '238',
+#     'duration': '238.184',
+#     'pos': '4',
+#     'id': '49'
+# }
+
+class Playlist(VimListBox):
+
+    def __init__(self):
+        self._body = urwid.SimpleFocusListWalker([])
+        super().__init__(self._body)
+
+    def set_contents(self, contents):
+        self._body[:] = contents
+
+    async def sync(self, config):
+        client = await mpd.connect(config)
+        items = [item async for item in client.playlistinfo()]
+
+        self.set_contents([
+            urwid.AttrMap(PlaylistTrack.from_mpd_info(item), 'track', 'focus track')
+            for item in items
+        ])
+
+        client.disconnect()
 
 
 class Pane(urwid.WidgetWrap):
@@ -126,6 +191,8 @@ def generate_palette() -> List[Tuple[str, str, str, str, str, str]]:
         Palette(name='pane', fg='#000', bg='#fff'),
         Palette(name='album', fg='#000', bg='#fff'),
         Palette(name='focus album', fg='#000', bg='#0ff'),
+        Palette(name='track', fg='#000', bg='#fff'),
+        Palette(name='focus track', fg='#000', bg='#0ff'),
     ]
 
     return [(p.name, 'default', 'default', 'default', p.fg, p.bg)
@@ -135,7 +202,7 @@ def generate_palette() -> List[Tuple[str, str, str, str, str, str]]:
 class Application(object):
 
     def __init__(self):
-        self.config: Dict[str, ChainMap] = {}
+        self.config: Config = {}
         self.widgets: Dict[str, urwid.Widget] = dict()
         self.loop = asyncio.get_event_loop()
         self.mainloop = urwid.MainLoop(
@@ -175,17 +242,20 @@ class Application(object):
 
     def build(self) -> urwid.Widget:
         command_prompt = CommandPrompt()
+        library = Library()
+        playlist = Playlist()
+
         window = Window([
             urwid.AttrMap(
                 Pane(
-                    AlbumList(),
-                    urwid.AttrMap(urwid.Text('footer1'), 'status')),
+                    library,
+                    urwid.AttrMap(urwid.Text('library'), 'status')),
                 'pane'
             ),
             urwid.AttrMap(
                 Pane(
-                    AlbumList(),
-                    urwid.AttrMap(urwid.Text('footer2'), 'status')),
+                    playlist,
+                    urwid.AttrMap(urwid.Text('playlist'), 'status')),
                 'pane'
             ),
         ])
@@ -197,6 +267,8 @@ class Application(object):
 
         self.register_widget(top, 'top')
         self.register_widget(command_prompt, 'command_prompt')
+        self.register_widget(library, 'library')
+        self.register_widget(playlist, 'playlist')
 
         top.focus_body()
 
@@ -205,14 +277,20 @@ class Application(object):
             'background',
         )
 
+    def run_coroutine(self, method, *args):
+        proxy = weakref.proxy(method.__self__)
+        weak_method = method.__func__.__get__(proxy)
+        self.loop.create_task(weak_method(*args))
+
     def run(self):
+        self.run_coroutine(self.widget_by_name('playlist').sync, self.config)
         self.mainloop.run()
 
 
 app = Application()
 
 
-def load_config(path):
+def load_config(path: str) -> Config:
     defaults = {key: vars(value)
                 for key, value in inspect.getmembers(default_config, inspect.isclass)}
 
@@ -223,10 +301,12 @@ def load_config(path):
         config_vals = {section: vars(getattr(config, section)) if hasattr(config, section) else {}
                        for section in defaults}
 
-        return {section: ChainMap(config_vals[section], defaults[section])
-                for section in defaults}
+        result = {section: ChainMap(config_vals[section], defaults[section])
+                  for section in defaults}
     else:
-        return defaults
+        result = defaults
+
+    return {key.lower(): value for key, value in result.items()}
 
 
 def main(args=None):
