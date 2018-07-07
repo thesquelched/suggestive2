@@ -82,7 +82,7 @@ class Window(urwid.Columns):
 
     def keypress(self, size, key: str):
         if key == 'q':
-            raise KeyboardInterrupt
+            raise urwid.ExitMainLoop
         else:
             return super().keypress(size, key)
 
@@ -138,7 +138,7 @@ class Application(object):
         }
 
     def exit(self):
-        raise KeyboardInterrupt
+        raise urwid.ExitMainLoop
 
     def register_widget(self, widget: urwid.Widget, name: str):
         self.widgets[name] = widget
@@ -191,10 +191,7 @@ class Application(object):
         )
 
     def run(self):
-        try:
-            self.loop.run()
-        except KeyboardInterrupt:
-            pass
+        self.loop.run()
 
 
 app = Application()
