@@ -17,3 +17,5 @@ venv
 .cache
 Pipfile.lock
 .python-version
+.mypy_cache
+.pytest_cache

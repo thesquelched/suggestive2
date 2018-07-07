@@ -1,0 +1,28 @@
+[MASTER]
+ignore=__init__.py
+
+[MESSAGES CONTROL]
+disable=wrong-import-order,locally-disabled,no-member,import-error,too-few-public-methods,no-self-use,bad-mcs-classmethod-argument,duplicate-code,cyclic-import,too-many-lines,no-else-return,keyword-arg-before-vararg,inconsistent-return-statements
+
+[DESIGN]
+max-args=8
+max-locals=30
+max-attributes=15
+max-public-methods=50
+
+[FORMAT]
+indent-string="    "
+
+[REPORTS]
+include-ids=y
+output-format=colorized
+
+[BASIC]
+bad-functions=apply,map,filter,reduce
+method-rgx=[a-z_][a-z0-9_]{1,50}$
+function-rgx=[a-z_][a-z0-9_]{1,50}$
+variable-rgx=[a-z_][a-z0-9_]{1,30}$
+argument-rgx=[a-z_][a-z0-9_]{1,30}$
+const-rgx=[A-z_][A-z0-9_]{1,30}$
+module-rgx=[A-z_][A-z0-9_-]{1,50}$
+good-names=i,f,_

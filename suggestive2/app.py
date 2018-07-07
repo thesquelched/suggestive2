@@ -318,32 +318,13 @@ async def mpd_idle(appref):
 app = Application()
 
 
-def load_config(path: str) -> Config:
-    defaults = {key: vars(value)
-                for key, value in inspect.getmembers(default_config, inspect.isclass)}
-
-    if os.path.isfile(path):
-        sys.path.insert(0, os.path.dirname(path))
-        config = import_module(os.path.splitext(os.path.basename(path))[0])
-
-        config_vals = {section: vars(getattr(config, section)) if hasattr(config, section) else {}
-                       for section in defaults}
-
-        result = {section: ChainMap(config_vals[section], defaults[section])
-                  for section in defaults}
-    else:
-        result = defaults
-
-    return {key.lower(): value for key, value in result.items()}
-
-
 def main(args=None):
     p = argparse.ArgumentParser(prog='suggestive2')
     p.add_argument('--config', '-c', default=expand('~/.suggestive/config.py'),
                    help='Config file (default: $HOME/.suggestive/config.py)')
 
     args = p.parse_args(args)
-    app.config = load_config(args.config)
+    app.config = default_config.load_config(args.config)
 
     app.run()
 

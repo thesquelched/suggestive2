@@ -1,0 +1,7 @@
+[run]
+omit =
+    build
+    dist
+    setup.py
+    */__init__.py
+    .venv

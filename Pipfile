@@ -4,16 +4,15 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-"e1839a8" = {editable = true, path = "."}
+urwid = ">=2.0.1"
+python-mpd2 = "<2.0.0"
 
 [dev-packages]
-ipython = "*"
 pytest = "*"
 pytest-flakes = "*"
 pytest-pep8 = "*"
 pytest-cov = "*"
 pytest-mypy = "*"
-pytest-pylint = "*"
 
 [requires]
 python_version = "3.7.0"
