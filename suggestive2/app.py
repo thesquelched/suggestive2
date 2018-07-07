@@ -12,6 +12,7 @@ import sys
 from collections import ChainMap
 from typing import List, Optional, NamedTuple, Tuple, Dict, Callable
 
+from suggestive2.monkey import monkeypatch
 from suggestive2 import mpd
 from suggestive2.types import Config
 from suggestive2.util import expand
@@ -20,6 +21,9 @@ import suggestive2.config as default_config
 
 LOG = logging.getLogger('suggestive2')
 LOG.addHandler(logging.NullHandler())
+
+
+monkeypatch()
 
 
 class Palette(NamedTuple):
