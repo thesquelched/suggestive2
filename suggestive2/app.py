@@ -10,7 +10,7 @@ import functools
 import traceback
 import sys
 from collections import ChainMap
-from typing import List, Optional, NamedTuple, Tuple, Dict, Callable
+from typing import List, Optional, NamedTuple, Tuple, Dict, Callable, Union
 
 from suggestive2.monkey import monkeypatch
 from suggestive2 import mpd
@@ -90,8 +90,8 @@ class Library(VimListBox):
 
 class PlaylistTrack(urwid.WidgetWrap):
 
-    def __init__(self, mpd_id: int, artist: str, album: str, track: str):
-        self.mpd_id =  mpd_id
+    def __init__(self, mpd_id: Union[str, int], artist: str, album: str, track: str):
+        self.mpd_id: int =  int(mpd_id)
         self.artist = artist
         self.album = album
         self.track = track
@@ -102,10 +102,10 @@ class PlaylistTrack(urwid.WidgetWrap):
     @classmethod
     def from_mpd_info(cls, info):
         return cls(
-            int(info['id']),
-            info['artist'],
-            info['album'],
-            info['title'],
+            info.get('id'),
+            info.get('artist', info.get('albumartist', 'Unknown')),
+            info.get('album', 'Unknown'),
+            info.get('title', 'Unknown'),
         )
 
 # {
@@ -135,16 +135,18 @@ class Playlist(VimListBox):
     def set_contents(self, contents):
         self._body[:] = contents
 
-    async def sync(self, config):
-        client = await mpd.connect(config)
+    async def sync(self, appref):
+        app = appref()
+        if not app:
+            return
+
+        client = await app.async_mpd()
         items = [item async for item in client.playlistinfo()]
 
         self.set_contents([
             urwid.AttrMap(PlaylistTrack.from_mpd_info(item), 'track', 'focus track')
             for item in items
         ])
-
-        client.disconnect()
 
 
 class Pane(urwid.WidgetWrap):
@@ -222,6 +224,7 @@ class Application(object):
         self.buffer_sequences: Dict[Tuple[str], Callable[[], Any]] = {
             ('Z', 'Z'): self.exit,
         }
+        self.mpd: MPDClient = None
 
     def exit(self):
         raise urwid.ExitMainLoop
@@ -281,14 +284,35 @@ class Application(object):
             'background',
         )
 
+    async def async_mpd(self):
+        if not self.mpd:
+            self.mpd = await mpd.connect(self.config)
+
+        return self.mpd
+
     def run_coroutine(self, method, *args):
         proxy = weakref.proxy(method.__self__)
         weak_method = method.__func__.__get__(proxy)
         self.loop.create_task(weak_method(*args))
 
     def run(self):
-        self.run_coroutine(self.widget_by_name('playlist').sync, self.config)
+        self.run_coroutine(self.widget_by_name('playlist').sync, weakref.ref(self))
+        self.loop.create_task(functools.partial(mpd_idle, weakref.ref(self))())
         self.mainloop.run()
+
+
+async def mpd_idle(appref):
+    app = appref()
+    if not app:
+        return
+
+    client = await app.async_mpd()
+    async for subsystems in client.idle():
+        if not appref():
+            return
+
+        if 'playlist' in subsystems:
+            app.run_coroutine(app.widget_by_name('playlist').sync, appref)
 
 
 app = Application()
