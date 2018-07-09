@@ -3,6 +3,8 @@ import logging
 import itertools
 from typing import Iterable, Optional, Dict, Union, AsyncGenerator, List, cast
 
+from suggestive2.util import run_method_coroutine
+
 
 LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
@@ -14,6 +16,7 @@ class MPDClient(object):
         self.host = host
         self.port = port
         self._lock = asyncio.Lock()
+        self._idle_task: Optional[asyncio.Task] = None
 
         self._reader: asyncio.StreamReader = cast(asyncio.StreamReader, None)
         self._writer: asyncio.StreamWriter = cast(asyncio.StreamWriter, None)
@@ -62,7 +65,14 @@ class MPDClient(object):
         self._writer.write(b'close\n')
         self._writer.close()
 
-    async def _run(self, command: str) -> AsyncGenerator[str, str]:
+    async def _run(self,
+                   command: str,
+                   timeout: Optional[Union[float, int]] = 1.0) -> AsyncGenerator[str, str]:
+        # TODO: some way of not cancelling an idle trying to run itself
+        if self._idle_task is not None:
+            self._writer.write(b'noidle\n')
+            await self._writer.drain()
+
         if not (self._reader and self._writer):
             await self.connect()
 
@@ -71,7 +81,10 @@ class MPDClient(object):
             await self._writer.drain()
 
             while True:
-                line = await asyncio.wait_for(self._reader.readline(), timeout=1.0)
+                try:
+                    line = await asyncio.wait_for(self._reader.readline(), timeout=timeout)
+                except Exception as exc:
+                    raise ValueError(f'fak! {command}') from exc
                 LOG.debug('Result line: %s', line)
 
                 if line is None:
@@ -85,9 +98,12 @@ class MPDClient(object):
 
                 yield line.decode().strip()
 
-    async def _run_tagged(self, command: str, type_: str) -> AsyncGenerator[Dict[str, str], str]:
+    async def _run_tagged(self,
+                          command: str,
+                          type_: str,
+                          **kwargs) -> AsyncGenerator[Dict[str, str], str]:
         obj: Dict[str, str] = {}
-        async for line in self._run(command):
+        async for line in self._run(command, **kwargs):
             tag, value = line.split(': ', 1)
             tag = tag.lower()
 
@@ -117,10 +133,23 @@ class MPDClient(object):
         async for item in self._run_tagged(command, type_):
             yield item
 
-    async def playlistinfo(self):
+    async def playlistinfo(self) -> AsyncGenerator[Dict[str, str], str]:
         async for item in self._run_tagged('playlistinfo', 'file'):
             yield item
 
+    async def _idle(self):
+        items = []
+        async for item in self._run_tagged('idle', 'changed', timeout=None):
+            items.append(item['changed'])
+
+        return items
+
     async def idle(self):
-        async for item in self._run_tagged('idle', 'changed'):
-            yield item
+        task = run_method_coroutine(asyncio.get_running_loop(), self._idle)
+        self._idle_task = task
+
+        try:
+            result = await task
+            return result
+        finally:
+            self._idle_task = None

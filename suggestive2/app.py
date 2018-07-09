@@ -3,12 +3,13 @@ import urwid
 import argparse
 import logging
 import weakref
-# import functools
+import functools
 from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any
 
 from suggestive2.monkey import monkeypatch
 from suggestive2.mpd import MPDClient
 from suggestive2.types import Config
+from suggestive2.util import run_method_coroutine
 import suggestive2.config as default_config
 
 
@@ -345,13 +346,11 @@ class Application(object):
         return self.mpd
 
     def run_coroutine(self, method, *args):
-        proxy = weakref.proxy(method.__self__)
-        weak_method = method.__func__.__get__(proxy)
-        self.loop.create_task(weak_method(*args))
+        run_method_coroutine(self.loop, method, *args)
 
     def run(self):
         self.run_coroutine(self.widget_by_name('playlist').sync, weakref.ref(self))
-        # self.loop.create_task(functools.partial(mpd_idle, weakref.ref(self))())
+        self.loop.create_task(functools.partial(mpd_idle, weakref.ref(self))())
         self.mainloop.run()
 
 
@@ -361,12 +360,14 @@ async def mpd_idle(appref):
         return
 
     client = await app.async_mpd()
-    async for subsystems in client.idle():
-        if not appref():
-            return
 
-        if 'playlist' in subsystems:
-            app.run_coroutine(app.widget_by_name('playlist').sync, appref)
+    while True:
+        for subsystems in await client.idle():
+            if not appref():
+                return
+
+            if 'playlist' in subsystems:
+                app.run_coroutine(app.widget_by_name('playlist').sync, appref)
 
 
 app = Application()
