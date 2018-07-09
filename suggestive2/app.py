@@ -262,7 +262,6 @@ class Application(object):
         self.config: Config = {}
         self.widgets: Dict[str, urwid.Widget] = dict()
         self.loop = asyncio.get_event_loop()
-        self.loop.set_debug(True)
         self.mainloop = urwid.MainLoop(
             self.build(),
             palette=generate_palette(),
