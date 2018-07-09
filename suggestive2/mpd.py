@@ -16,6 +16,8 @@ class MPDClient(object):
         self.host = host
         self.port = port
         self._lock = asyncio.Lock()
+
+        self._idle_lock = asyncio.Lock()
         self._idle_task: Optional[asyncio.Task] = None
 
         self._reader: asyncio.StreamReader = cast(asyncio.StreamReader, None)
@@ -68,8 +70,7 @@ class MPDClient(object):
     async def _run(self,
                    command: str,
                    timeout: Optional[Union[float, int]] = 1.0) -> AsyncGenerator[str, str]:
-        # TODO: some way of not cancelling an idle trying to run itself
-        if self._idle_task is not None:
+        if self._idle_task is not None and command != 'idle':
             self._writer.write(b'noidle\n')
             await self._writer.drain()
 
@@ -145,11 +146,12 @@ class MPDClient(object):
         return items
 
     async def idle(self):
-        task = run_method_coroutine(asyncio.get_running_loop(), self._idle)
-        self._idle_task = task
+        async with self._idle_lock:
+            task = run_method_coroutine(asyncio.get_running_loop(), self._idle)
+            self._idle_task = task
 
-        try:
-            result = await task
-            return result
-        finally:
-            self._idle_task = None
+            try:
+                result = await task
+                return result
+            finally:
+                self._idle_task = None
