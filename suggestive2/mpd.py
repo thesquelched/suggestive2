@@ -138,16 +138,16 @@ class MPDClient(object):
         async for item in self._run_tagged('playlistinfo', 'file'):
             yield item
 
-    async def _idle(self):
+    async def _idle(self) -> List[str]:
         items = []
         async for item in self._run_tagged('idle', 'changed', timeout=None):
             items.append(item['changed'])
 
         return items
 
-    async def idle(self):
+    async def idle(self) -> List[str]:
         async with self._idle_lock:
-            task = run_method_coroutine(asyncio.get_running_loop(), self._idle)
+            task = run_method_coroutine(asyncio.get_event_loop(), self._idle)
             self._idle_task = task
 
             try:
