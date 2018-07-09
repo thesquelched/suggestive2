@@ -1,10 +1,126 @@
-from mpd.asyncio import MPDClient
+import asyncio
+import logging
+import itertools
+from typing import Iterable, Optional, Dict, Union, AsyncGenerator, List, cast
 
-from suggestive2.types import Config
+
+LOG = logging.getLogger(__name__)
+LOG.addHandler(logging.NullHandler())
 
 
-async def connect(config: Config) -> MPDClient:
-    client = MPDClient()
-    await client.connect(config['mpd']['host'], int(config['mpd']['port']))
+class MPDClient(object):
 
-    return client
+    def __init__(self, host: str = 'localhost', port: int = 6600) -> None:
+        self.host = host
+        self.port = port
+        self._lock = asyncio.Lock()
+
+        self._reader: asyncio.StreamReader = cast(asyncio.StreamReader, None)
+        self._writer: asyncio.StreamWriter = cast(asyncio.StreamWriter, None)
+
+    async def __aenter__(self) -> 'MPDClient':
+        return await self.connect()
+
+    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
+
+    async def connect(self, timeout: Union[float, int] = 1.0) -> 'MPDClient':
+        async with self._lock:
+            if self._reader or self._writer:
+                return self
+
+            try:
+                reader, writer = await asyncio.open_connection(self.host, self.port)
+            except Exception:
+                raise ConnectionError(f'Unable to connect to {self.host}:{self.port}')
+
+            try:
+                statusline = await asyncio.wait_for(reader.readline(), timeout=timeout)
+                LOG.debug('Host %s:%d responded with %s', self.host, self.port, repr(statusline))
+                if not statusline:
+                    raise ConnectionError(f'Unable to connect to {self.host}:{self.port}')
+                elif not statusline.startswith(b'OK MPD '):
+                    raise ConnectionError(
+                        f'Unable to understand response from {self.host}:{self.port}; MPD may '
+                        f'not be bound to this address')
+
+                version = statusline.decode().strip().rsplit(' ', 1)[-1]
+                LOG.info('Connected to MPD version %s on %s:%d', version, self.host, self.port)
+            except Exception:
+                writer.close()
+                raise
+
+            self._reader: asyncio.StreamReader = reader
+            self._writer: asyncio.StreamWriter = writer
+
+            return self
+
+    def close(self) -> None:
+        if not (self._reader and self._writer):
+            return
+
+        self._writer.write(b'close\n')
+        self._writer.close()
+
+    async def _run(self, command: str) -> AsyncGenerator[str, str]:
+        if not (self._reader and self._writer):
+            await self.connect()
+
+        async with self._lock:
+            self._writer.write(command.encode() + b'\n')
+            await self._writer.drain()
+
+            while True:
+                line = await asyncio.wait_for(self._reader.readline(), timeout=1.0)
+                LOG.debug('Result line: %s', line)
+
+                if line is None:
+                    raise ConnectionError('Unable to read command output')
+                elif line.startswith(b'ACK '):
+                    msg = line.decode().split(' ', 3)[-1]
+                    raise ValueError(f'MPD error: {msg}')
+
+                if line == b'OK\n':
+                    return
+
+                yield line.decode().strip()
+
+    async def _run_tagged(self, command: str, type_: str) -> AsyncGenerator[Dict[str, str], str]:
+        obj: Dict[str, str] = {}
+        async for line in self._run(command):
+            tag, value = line.split(': ', 1)
+            tag = tag.lower()
+
+            if tag == type_ and obj:
+                yield obj
+                obj = {}
+
+            obj[tag] = value
+
+        if obj:
+            yield obj
+
+    async def list(self,
+                   type_: str,
+                   groupby: Optional[Iterable[str]] = None) -> AsyncGenerator[Dict[str, str], str]:
+        if groupby is None:
+            groupby = []
+
+        tags: List[str] = [type_]
+        tags.extend(groupby)
+
+        command = ' '.join(itertools.chain(
+            ('list', type_),
+            itertools.chain.from_iterable(('group', group) for group in tags[1:]),
+        ))
+
+        async for item in self._run_tagged(command, type_):
+            yield item
+
+    async def playlistinfo(self):
+        async for item in self._run_tagged('playlistinfo', 'file'):
+            yield item
+
+    async def idle(self):
+        async for item in self._run_tagged('idle', 'changed'):
+            yield item

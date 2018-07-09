@@ -3,12 +3,11 @@ import urwid
 import argparse
 import logging
 import weakref
-import functools
+# import functools
 from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any
-from mpd.asyncio import MPDClient
 
 from suggestive2.monkey import monkeypatch
-from suggestive2 import mpd
+from suggestive2.mpd import MPDClient
 from suggestive2.types import Config
 import suggestive2.config as default_config
 
@@ -18,6 +17,53 @@ LOG.addHandler(logging.NullHandler())
 
 
 monkeypatch()
+
+
+class LibraryListWalker(urwid.ListWalker):
+
+    def __init__(self):
+        self.library: List[Tuple[str, str]] = []
+        self.contents: List[urwid.Widget] = []
+        self.focus: int = 0
+
+    def get_focus(self):
+        return self._get(self.focus)
+
+    def set_focus(self, focus):
+        self.focus = focus
+        self._modified()
+
+    def get_next(self, current):
+        return self._get(current + 1)
+
+    def get_prev(self, current):
+        return self._get(current - 1)
+
+    def _get(self, position):
+        if position < 0:
+            return None, None
+
+        if position >= len(self.contents):
+            if position >= len(self.library):
+                app.run_coroutine(self.load, weakref.ref(app))
+                return None, None
+            else:
+                self.contents.extend(
+                    urwid.AttrMap(LibraryAlbum(artist, album), 'album', 'focus album')
+                    for artist, album in self.library[len(self.contents):position + 1]
+                )
+
+        return self.contents[position], position
+
+    async def load(self, appref):
+        app = appref()
+        if not app:
+            return
+
+        client = await app.async_mpd()
+        self.library = [(obj['albumartist'], obj['album'])
+                        async for obj in client.list('albumartist', groupby=('album',))]
+        self._modified()
 
 
 class Palette(NamedTuple):
@@ -67,19 +113,29 @@ class VimListBox(urwid.ListBox):
         return super().keypress(size, self.REMAP.get(key, key))
 
 
+class LibraryAlbum(urwid.WidgetWrap):
+
+    def __init__(self, artist: str, album: str) -> None:
+        self.artist = artist
+        self.album = album
+
+        widget = urwid.SelectableIcon(f'{artist} - {album}')
+        super().__init__(widget)
+
+
 class Library(VimListBox):
 
     def __init__(self):
-        albums = [
-            urwid.SelectableIcon('item1'),
-            urwid.SelectableIcon('item2'),
-            urwid.SelectableIcon('item3'),
-        ]
-        self._body = urwid.SimpleFocusListWalker([
-            urwid.AttrMap(item, 'album', 'focus album')
-            for item in albums
-        ])
+        self._body = LibraryListWalker()
         super().__init__(self._body)
+
+    # def __init__(self):
+    #     self._body = urwid.SimpleFocusListWalker([])
+    #     super().__init__(self._body)
+
+    # def update_albums(self, albums):
+    #     self._body[:] = [urwid.AttrMap(LibraryAlbum(artist, album), 'album' 'focus album')
+    #                      for artist, album in albums]
 
 
 class PlaylistTrack(urwid.WidgetWrap):
@@ -206,6 +262,7 @@ class Application(object):
         self.config: Config = {}
         self.widgets: Dict[str, urwid.Widget] = dict()
         self.loop = asyncio.get_event_loop()
+        self.loop.set_debug(True)
         self.mainloop = urwid.MainLoop(
             self.build(),
             palette=generate_palette(),
@@ -281,7 +338,10 @@ class Application(object):
 
     async def async_mpd(self):
         if not self.mpd:
-            self.mpd = await mpd.connect(self.config)
+            self.mpd = await MPDClient(
+                self.config['mpd']['host'],
+                self.config['mpd']['port']
+            ).connect()
 
         return self.mpd
 
@@ -292,7 +352,7 @@ class Application(object):
 
     def run(self):
         self.run_coroutine(self.widget_by_name('playlist').sync, weakref.ref(self))
-        self.loop.create_task(functools.partial(mpd_idle, weakref.ref(self))())
+        # self.loop.create_task(functools.partial(mpd_idle, weakref.ref(self))())
         self.mainloop.run()
 
 
