@@ -11,6 +11,18 @@ LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
 
 
+def make_slice(start: Optional[int] = None, end: Optional[int] = None) -> str:
+    if start is not None and end is not None:
+        return f"{start}:{'' if end == -1 else end}"
+    elif start is not None:
+        return f'{start}'
+    elif end is not None:
+        return f":{'' if end == -1 else end}"
+    else:
+        return ''
+
+
+
 class MPDClient(object):
 
     def __init__(self, host: str = 'localhost', port: int = 6600) -> None:
@@ -169,14 +181,8 @@ class MPDClient(object):
             start: Optional[int] = None,
             end: Optional[int] = None
         ) -> AsyncGenerator[Dict[str, str], str]:
-        if start is not None and end is not None:
-            command = f"playlistinfo {start}:{'' if end == -1 else end}"
-        elif start is not None:
-            command = f'playlistinfo {start}'
-        elif end is not None:
-            command = f"playlistinfo 0:{'' if end == -1 else end}"
-        else:
-            command = 'playlistinfo'
+        spec = make_slice(start, end)
+        command = f'playlistinfo {spec}' if spec else 'playlistinfo'
 
         async for item in self._run_tagged(command, 'file'):
             yield item
@@ -226,6 +232,12 @@ class MPDClient(object):
 
     async def play(self, position: int) -> None:
         await self._run_list(f'play {position}')
+
+    async def delete(self,
+                     start: int,
+                     end: Optional[int] = None) -> None:
+        spec = make_slice(start, end)
+        await self._run_list(f'delete {spec}')
 
     async def next(self) -> None:
         await self._run_list('next')

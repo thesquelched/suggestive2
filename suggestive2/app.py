@@ -375,6 +375,18 @@ class Playlist(VimListBox):
         client = await app.async_mpd()
         await client.play(self.focus_position if index is None else index)
 
+    async def delete(self, appref: weakref.ref, index: Optional[int] = None) -> None:
+        app = appref()
+        if not app:
+            return
+
+        if not self.contents:
+            LOG.info('Nothing to delete')
+            return
+
+        client = await app.async_mpd()
+        await client.delete(self.focus_position if index is None else index)
+
     def get_search_contents(self) -> Iterable[Tuple[str, int]]:
         widgets = (widget.base_widget for widget in self._body)
         return itertools.chain.from_iterable(
@@ -385,6 +397,8 @@ class Playlist(VimListBox):
     def keypress(self, size, key: str):
         if key == 'enter':
             app.run_coroutine(self.play, weakref.ref(app))
+        elif key == 'd':
+            app.run_coroutine(self.delete, weakref.ref(app))
         else:
             return super().keypress(size, key)
 
