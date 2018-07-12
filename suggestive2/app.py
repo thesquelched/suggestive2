@@ -219,6 +219,8 @@ class Window(urwid.Columns):
     def keypress(self, size, key: str):
         if key == 'q':
             raise urwid.ExitMainLoop
+        if key == 'c':
+            app.loop.create_task(functools.partial(mpd_clear, weakref.ref(app))())
         else:
             return super().keypress(size, key)
 
@@ -368,6 +370,15 @@ async def mpd_idle(appref):
 
             if 'playlist' in subsystems:
                 app.run_coroutine(app.widget_by_name('playlist').sync, appref)
+
+
+async def mpd_clear(appref):
+    app = appref()
+    if not app:
+        return
+
+    client = await app.async_mpd()
+    await client.clear()
 
 
 app = Application()

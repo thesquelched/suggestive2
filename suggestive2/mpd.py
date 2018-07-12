@@ -86,6 +86,7 @@ class MPDClient(object):
                     line = await asyncio.wait_for(self._reader.readline(), timeout=timeout)
                 except Exception as exc:
                     raise ValueError(f'fak! {command}') from exc
+
                 LOG.debug('Result line: %s', line)
 
                 if line is None:
@@ -98,6 +99,9 @@ class MPDClient(object):
                     return
 
                 yield line.decode().strip()
+
+    async def _run_list(self, *args, **kwargs) -> AsyncGenerator[str, str]:
+        return [line async for line in self._run(*args, **kwargs)]
 
     async def _run_tagged(self,
                           command: str,
@@ -139,11 +143,8 @@ class MPDClient(object):
             yield item
 
     async def _idle(self) -> List[str]:
-        items = []
-        async for item in self._run_tagged('idle', 'changed', timeout=None):
-            items.append(item['changed'])
-
-        return items
+        items = self._run_tagged('idle', 'changed', timeout=None)
+        return [item['changed'] async for item in items]
 
     async def idle(self) -> List[str]:
         async with self._idle_lock:
@@ -155,3 +156,6 @@ class MPDClient(object):
                 return result
             finally:
                 self._idle_task = None
+
+    async def clear(self) -> None:
+        await self._run_list('clear')
