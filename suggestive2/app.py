@@ -564,7 +564,10 @@ class Application(object):
     def run(self):
         self.run_coroutine(self.widget_by_name('playlist').sync, weakref.ref(self))
         self.loop.create_task(functools.partial(mpd_idle, weakref.ref(self))())
+
         self.mainloop.run()
+        if self.mpd:
+            self.mpd.close()
 
 
 async def mpd_idle(appref):
