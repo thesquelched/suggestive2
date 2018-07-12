@@ -164,8 +164,21 @@ class MPDClient(object):
         async for item in self._run_tagged(command, type_):
             yield item
 
-    async def playlistinfo(self) -> AsyncGenerator[Dict[str, str], str]:
-        async for item in self._run_tagged('playlistinfo', 'file'):
+    async def playlistinfo(
+            self,
+            start: Optional[int] = None,
+            end: Optional[int] = None
+        ) -> AsyncGenerator[Dict[str, str], str]:
+        if start is not None and end is not None:
+            command = f"playlistinfo {start}:{'' if end == -1 else end}"
+        elif start is not None:
+            command = f'playlistinfo {start}'
+        elif end is not None:
+            command = f"playlistinfo 0:{'' if end == -1 else end}"
+        else:
+            command = 'playlistinfo'
+
+        async for item in self._run_tagged(command, 'file'):
             yield item
 
     async def _idle(self) -> List[str]:
@@ -210,6 +223,9 @@ class MPDClient(object):
 
     async def playid(self, track_id: int) -> None:
         await self._run_list(f'playid {track_id}')
+
+    async def play(self, position: int) -> None:
+        await self._run_list(f'play {position}')
 
     async def currentsong(self) -> Optional[Dict[str, str]]:
         result = [track async for track in self._run_tagged('currentsong', 'file')]

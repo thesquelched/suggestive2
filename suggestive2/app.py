@@ -7,7 +7,7 @@ import functools
 import os
 import itertools
 from collections import defaultdict
-from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any, Set, Iterable
+from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any, Set, Iterable, Optional
 
 from suggestive2.monkey import monkeypatch
 from suggestive2.mpd import MPDClient
@@ -363,12 +363,30 @@ class Playlist(VimListBox):
             for i, item in enumerate(items)
         ])
 
+    async def play(self, appref: weakref.ref, index: Optional[int] = None) -> None:
+        app = appref()
+        if not app:
+            return
+
+        if not self.contents:
+            LOG.info('Nothing to play')
+            return
+
+        client = await app.async_mpd()
+        await client.play(self.focus_position if index is None else index)
+
     def get_search_contents(self) -> Iterable[Tuple[str, int]]:
         widgets = (widget.base_widget for widget in self._body)
         return itertools.chain.from_iterable(
             ((track.artist, i), (track.album, i), (track.track, i))
             for i, track in enumerate(widgets)
         )
+
+    def keypress(self, size, key: str):
+        if key == 'enter':
+            app.run_coroutine(self.play, weakref.ref(app))
+        else:
+            return super().keypress(size, key)
 
 
 class Pane(urwid.WidgetWrap):
