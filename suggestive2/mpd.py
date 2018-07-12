@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import itertools
+from contextlib import asynccontextmanager
 from typing import Iterable, Optional, Dict, Union, AsyncGenerator, List, cast
 
 from suggestive2.util import run_method_coroutine, escape
@@ -17,6 +18,7 @@ class MPDClient(object):
         self.port = port
         self._lock = asyncio.Lock()
 
+        self._noidle_lock = asyncio.Lock()
         self._idle_lock = asyncio.Lock()
         self._idle_task: Optional[asyncio.Task] = None
 
@@ -29,8 +31,19 @@ class MPDClient(object):
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
+    @asynccontextmanager
+    async def _acquire(self, lock, name=None):
+        lockname = 'lock' if name is None else f'{name} lock'
+
+        LOG.debug('Waiting for %s (%s)', lockname, lock)
+        async with lock:
+            LOG.debug('Acquired %s (%s)', lockname, lock)
+            yield
+
+        LOG.debug('Released %s (%s)', lockname, lock)
+
     async def connect(self, timeout: Union[float, int] = 1.0) -> 'MPDClient':
-        async with self._lock:
+        async with self._acquire(self._lock, 'connect'):
             if self._reader or self._writer:
                 LOG.debug('Already connected to MPD on %s:%d', self.host, self.port)
                 return self
@@ -79,14 +92,21 @@ class MPDClient(object):
     async def _run(self,
                    command: str,
                    timeout: Optional[Union[float, int]] = 1.0) -> AsyncGenerator[str, str]:
-        if self._idle_task is not None and command != 'idle':
-            self._writer.write(b'noidle\n')
-            await self._writer.drain()
+        if command != 'idle' and self._lock.locked() and self._idle_lock.locked():
+            while self._idle_task is None:
+                await asyncio.sleep(0.01)
+
+            async with self._noidle_lock:
+                if self._idle_task is not None:
+                    await self._send_command('noidle')
+
+                    while self._idle_task is not None:
+                        await asyncio.sleep(0.01)
 
         if not (self._reader and self._writer):
             await self.connect()
 
-        async with self._lock:
+        async with self._acquire(self._lock, f"command '{command}'"):
             await self._send_command(command)
 
             while True:
@@ -95,11 +115,12 @@ class MPDClient(object):
                 except Exception as exc:
                     raise ValueError(f'fak! {command}') from exc
 
-                LOG.debug('Result line: %s', line)
+                LOG.debug('MPD line from command %s: %s', command, line)
 
                 if line is None:
                     raise ConnectionError('Unable to read command output')
                 elif line.startswith(b'ACK '):
+                    LOG.debug('Error response: %s', line)
                     msg = line.decode().split(' ', 3)[-1]
                     raise ValueError(f'MPD error: {msg}')
 
@@ -152,7 +173,7 @@ class MPDClient(object):
         return [item['changed'] async for item in items]
 
     async def idle(self) -> List[str]:
-        async with self._idle_lock:
+        async with self._acquire(self._idle_lock, 'idle'):
             task = run_method_coroutine(asyncio.get_event_loop(), self._idle)
             self._idle_task = task
 

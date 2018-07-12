@@ -331,7 +331,9 @@ class Application(object):
         self.buffer_sequences: Dict[Tuple[str, ...], Callable[[], Any]] = {
             ('Z', 'Z'): self.exit,
         }
+        self.mpd_lock = asyncio.Lock()
         self.mpd: MPDClient = None
+
 
     def exit(self):
         raise urwid.ExitMainLoop
@@ -393,10 +395,12 @@ class Application(object):
 
     async def async_mpd(self):
         if not self.mpd:
-            self.mpd = await MPDClient(
-                self.config['mpd']['host'],
-                self.config['mpd']['port']
-            ).connect()
+            async with self.mpd_lock:
+                if not self.mpd:
+                    self.mpd = await MPDClient(
+                        self.config['mpd']['host'],
+                        self.config['mpd']['port']
+                    ).connect()
 
         return self.mpd
 
@@ -417,12 +421,20 @@ async def mpd_idle(appref):
     client = await app.async_mpd()
 
     while True:
+        # Wait to let other commands queue up
+        await asyncio.sleep(0.1)
+
         for subsystems in await client.idle():
             if not appref():
                 return
 
-            if 'playlist' in subsystems:
+            LOG.debug('Subsystems changed: %s', subsystems)
+
+            if 'playlist' in subsystems or 'player' in subsystems:
                 app.run_coroutine(app.widget_by_name('playlist').sync, appref)
+            if 'database' in subsystems:
+                pass
+
 
 
 def mpd_func(command):
@@ -450,7 +462,7 @@ def init_logging(args):
 
     logging.basicConfig(filename=path,
                         level=logging.ERROR,
-                        format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+                        format='%(asctime)s %(threadName)s %(levelname)s %(name)s: %(message)s')
     LOG.setLevel(args.log_level)
 
 
