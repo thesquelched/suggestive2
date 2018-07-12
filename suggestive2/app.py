@@ -4,12 +4,13 @@ import argparse
 import logging
 import weakref
 import functools
+import os
 from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any
 
 from suggestive2.monkey import monkeypatch
 from suggestive2.mpd import MPDClient
 from suggestive2.types import Config
-from suggestive2.util import run_method_coroutine
+from suggestive2.util import run_method_coroutine, expand
 import suggestive2.config as default_config
 
 
@@ -124,18 +125,31 @@ class LibraryAlbum(urwid.WidgetWrap):
         super().__init__(widget)
 
     def keypress(self, size, key: str):
-        if key == ' ':
-            app.run_coroutine(self.enqueue, weakref.ref(app))
+        if key in ('enter', ' '):
+            app.run_coroutine(self.enqueue, weakref.ref(app), key == 'enter')
         else:
             return super().keypress(size, key)
 
-    async def enqueue(self, appref):
+    async def enqueue(self, appref: weakref.ref, play: bool) -> None:
         app = appref()
         if not app:
             return
 
         client = await app.async_mpd()
         await client.searchadd(artist=self.artist, album=self.album)
+
+        if play:
+            tracks = [track async for track in client.playlistsearch(artist=self.artist,
+                                                                     album=self.album)]
+            if not tracks:
+                raise ValueError('There should be tracks here...')
+
+            first = tracks[0]
+            last_track_id = next(track['id']
+                                 for track in reversed(tracks)
+                                 if track['title'] == first['title'])
+            await client.playid(int(last_track_id))
+
 
 
 class Library(VimListBox):
@@ -407,12 +421,29 @@ mpd_pause = mpd_func('pause')
 app = Application()
 
 
+def init_logging(args):
+    path = expand(args.log)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    logging.basicConfig(filename=path,
+                        level=logging.ERROR,
+                        format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+    LOG.setLevel(args.log_level)
+
+
 def main(args=None):
     p = argparse.ArgumentParser(prog='suggestive2')
     p.add_argument('--config', '-c', default='$HOME/.suggestive/config.py',
                    help='Config file (default: $HOME/.suggestive/config.py)')
+    p.add_argument('--log', '-l', default='$HOME/.suggestive/log.txt',
+                   help='Log file (default: $HOME/.suggestive/log.txt)')
+    p.add_argument('--debug', '-d', dest='log_level', action='store_const',
+                   const=logging.DEBUG, default=logging.INFO,
+                   help='Enable debug logging')
 
     args = p.parse_args(args)
+    init_logging(args)
+
     app.config = default_config.load_config(args.config)
 
     app.run()

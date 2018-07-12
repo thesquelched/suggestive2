@@ -3,7 +3,7 @@ import logging
 import itertools
 from typing import Iterable, Optional, Dict, Union, AsyncGenerator, List, cast
 
-from suggestive2.util import run_method_coroutine
+from suggestive2.util import run_method_coroutine, escape
 
 
 LOG = logging.getLogger(__name__)
@@ -32,7 +32,10 @@ class MPDClient(object):
     async def connect(self, timeout: Union[float, int] = 1.0) -> 'MPDClient':
         async with self._lock:
             if self._reader or self._writer:
+                LOG.debug('Already connected to MPD on %s:%d', self.host, self.port)
                 return self
+
+            LOG.info('Connecting to MPD on %s:%d', self.host, self.port)
 
             try:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
@@ -67,6 +70,12 @@ class MPDClient(object):
         self._writer.write(b'close\n')
         self._writer.close()
 
+    async def _send_command(self, command: str) -> None:
+        LOG.debug("Running mpd command '%s'", command)
+
+        self._writer.write(command.encode() + b'\n')
+        await self._writer.drain()
+
     async def _run(self,
                    command: str,
                    timeout: Optional[Union[float, int]] = 1.0) -> AsyncGenerator[str, str]:
@@ -78,8 +87,7 @@ class MPDClient(object):
             await self.connect()
 
         async with self._lock:
-            self._writer.write(command.encode() + b'\n')
-            await self._writer.drain()
+            await self._send_command(command)
 
             while True:
                 try:
@@ -127,12 +135,9 @@ class MPDClient(object):
         if groupby is None:
             groupby = []
 
-        tags: List[str] = [type_]
-        tags.extend(groupby)
-
         command = ' '.join(itertools.chain(
             ('list', type_),
-            itertools.chain.from_iterable(('group', group) for group in tags[1:]),
+            itertools.chain.from_iterable(('group', escape(group)) for group in groupby),
         ))
 
         async for item in self._run_tagged(command, type_):
@@ -164,11 +169,23 @@ class MPDClient(object):
         await self._run_list('pause')
 
     async def searchadd(self, **tags) -> None:
-        escaped = {key: value.replace('"', '\\"') for key, value in tags.items()}
         command = ' '.join(itertools.chain(
             ('searchadd',),
             itertools.chain.from_iterable(
-                (key, f'"{value}"') for key, value in escaped.items()
+                (key, escape(value)) for key, value in tags.items()
             ),
         ))
         await self._run_list(command)
+
+    async def playlistsearch(self, **tags) -> None:
+        command = ' '.join(itertools.chain(
+            ('playlistsearch',),
+            itertools.chain.from_iterable(
+                (key, escape(value)) for key, value in tags.items()
+            ),
+        ))
+        async for track in self._run_tagged(command, 'file'):
+            yield track
+
+    async def playid(self, track_id: int) -> None:
+        await self._run_list(f'playid {track_id}')
