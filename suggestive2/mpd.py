@@ -227,6 +227,12 @@ class MPDClient(object):
     async def play(self, position: int) -> None:
         await self._run_list(f'play {position}')
 
+    async def next(self) -> None:
+        await self._run_list('next')
+
+    async def previous(self) -> None:
+        await self._run_list('previous')
+
     async def currentsong(self) -> Optional[Dict[str, str]]:
         result = [track async for track in self._run_tagged('currentsong', 'file')]
         return result[0] if result else None

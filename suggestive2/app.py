@@ -408,13 +408,7 @@ class Window(urwid.Columns):
         super().__init__(panes, dividechars=1)
 
     def keypress(self, size, key: str):
-        if key == 'q':
-            raise urwid.ExitMainLoop
-        elif key == 'c':
-            app.loop.create_task(functools.partial(mpd_clear, weakref.ref(app))())
-        elif key == 'p':
-            app.loop.create_task(functools.partial(mpd_pause, weakref.ref(app))())
-        elif key == 'ctrl w':
+        if key == 'ctrl w':
             idx = self.focus_col + 1
             if idx >= len(self.contents):
                 idx = 0
@@ -437,12 +431,22 @@ class TopLevel(urwid.WidgetWrap):
         self.focus_on('body')
 
     def keypress(self, size, key: str):
-        if key == ':':
+        if key == 'q':
+            raise urwid.ExitMainLoop
+        elif key == 'c':
+            app.loop.create_task(functools.partial(mpd_clear, weakref.ref(app))())
+        elif key == 'p':
+            app.loop.create_task(functools.partial(mpd_pause, weakref.ref(app))())
+        elif key == ':':
             app.widget_by_name('command_prompt').start(
                 announce,
                 announce,
             )
             self._w.set_focus('footer')
+        elif key == '>':
+            app.loop.create_task(functools.partial(mpd_next, weakref.ref(app))())
+        elif key == '<':
+            app.loop.create_task(functools.partial(mpd_previous, weakref.ref(app))())
         else:
             return super().keypress(size, key)
 
@@ -626,6 +630,8 @@ def mpd_func(command):
 
 mpd_clear = mpd_func('clear')
 mpd_pause = mpd_func('pause')
+mpd_next = mpd_func('next')
+mpd_previous= mpd_func('previous')
 
 
 app = Application()
