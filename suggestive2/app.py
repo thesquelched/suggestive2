@@ -5,12 +5,14 @@ import logging
 import weakref
 import functools
 import os
-from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any
+import itertools
+from collections import defaultdict
+from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any, Set, Iterable
 
 from suggestive2.monkey import monkeypatch
 from suggestive2.mpd import MPDClient
 from suggestive2.types import Config
-from suggestive2.util import run_method_coroutine, expand
+from suggestive2.util import run_method_coroutine, expand, prefix_matches
 import suggestive2.config as default_config
 
 
@@ -19,7 +21,6 @@ LOG.addHandler(logging.NullHandler())
 
 
 monkeypatch()
-
 
 class LibraryListWalker(urwid.ListWalker):
 
@@ -72,6 +73,12 @@ class LibraryListWalker(urwid.ListWalker):
                         async for obj in client.list('albumartist', groupby=('album',))]
         self._modified()
 
+    # def find(self, pattern):
+    #     word_to_idx = sorted(itertools.chain.from_iterable(
+    #         ((artist, i), (album, i))
+    #         for i, (artist, album) in enumerate(self.library)
+    #     ))
+
 
 class Palette(NamedTuple):
     name: str
@@ -92,20 +99,38 @@ class CommandPrompt(urwid.Edit):
 
     def __init__(self):
         super().__init__('')
+        self.search_results = []
+        self.keypress_callback: Optional[Callable] = None
+        self.complete_callback: Optional[Callable] = None
 
     def clear(self):
         self.set_caption('')
         self.set_edit_text('')
+        self.search_results.clear()
 
-    def start(self, caption: str = ': '):
+    def start(self,
+              keypress_callback: Callable,
+              complete_callback: Callable,
+              caption: str = ': ') -> None:
         self.set_caption(caption)
+
+        self.keypress_callback = keypress_callback
+        self.complete_callback = complete_callback
 
     def keypress(self, size, key: str):
         if key == 'esc':
             app.widget_by_name('top').focus_body()
             self.clear()
+        elif key == 'enter':
+            app.widget_by_name('top').focus_body()
+            self.complete_callback(self.get_edit_text())
+            self.clear()
         else:
-            return super().keypress(size, key)
+            result = super().keypress(size, key)
+
+            self.keypress_callback(self.get_edit_text())
+
+            return result
 
 
 class VimListBox(urwid.ListBox):
@@ -118,8 +143,94 @@ class VimListBox(urwid.ListBox):
         'ctrl b': 'page up',
     }
 
+    def __init__(self, body):
+        super().__init__(body)
+        self.search_contents: Dict[str, Set[int]] = {}
+        self.search_results: List[List[str]] = []
+        self.search_result: List[int] = []
+
     def keypress(self, size, key: str):
-        return super().keypress(size, self.REMAP.get(key, key))
+        if key == '/':
+            search_contents = defaultdict(set)
+            for key, value in self.get_search_contents():
+                search_contents[key.lower()].add(value)
+
+            self.search_contents = search_contents
+
+            app.widget_by_name('command_prompt').start(
+                self.search_keypress,
+                self.search_complete,
+                '/',
+            )
+            app.widget_by_name('top').focus_on('footer')
+        elif key == 'n':
+            self.next_search_match()
+        elif key == 'N':
+            self.prev_search_match()
+        else:
+            return super().keypress(size, self.REMAP.get(key, key))
+
+    def get_search_contents(self) -> Iterable[Tuple[str, int]]:
+        raise NotImplementedError
+
+    def search_keypress(self, value: str) -> None:
+        assert len(value) != len(self.search_results)
+
+        if len(value) < len(self.search_results):
+            self.search_results.pop()
+        else:
+            words = (self.search_results[-1]
+                     if self.search_results
+                     else sorted(self.search_contents))
+            self.search_results.append(prefix_matches(value.lower(), words))
+
+        if not self.search_results:
+            return
+
+        LOG.debug('Current search results for prefix %s: %s', value, self.search_results[-1])
+
+    def search_complete(self, value) -> None:
+        if not self.search_results:
+            LOG.info('No search performed')
+            return
+
+        self.search_result = sorted(set(itertools.chain.from_iterable(
+            self.search_contents[word]
+            for word in self.search_results[-1]
+        )))
+
+        self.search_results.clear()
+        if not self.search_result:
+            LOG.info("No search results found for pattern '%s'", value)
+            return
+
+        LOG.info('Found search results at indicies %s',
+                 ', '.join(str(i) for i in self.search_result))
+
+        self.next_search_match()
+
+    def next_search_match(self) -> None:
+        if not self.search_result:
+            return
+
+        idx = next(
+            (i for i in self.search_result if i > self.focus_position),
+            self.search_result[0],
+        )
+        LOG.debug('Next search match is at index %d', idx)
+        self.focus_position = idx
+
+    def prev_search_match(self) -> None:
+        if not self.search_result:
+            return
+
+        idx = next(
+            (i for i in reversed(self.search_result) if i < self.focus_position),
+            self.search_result[-1],
+        )
+
+        LOG.debug('Previous search match is at index %d', idx)
+        self.focus_position = idx
 
 
 class LibraryAlbum(urwid.WidgetWrap):
@@ -167,6 +278,12 @@ class Library(VimListBox):
 
     def clear(self):
         self._body.clear()
+
+    def get_search_contents(self) -> Iterable[Tuple[str, int]]:
+        return (itertools.chain.from_iterable(
+            ((artist, i), (album, i))
+            for i, (artist, album) in enumerate(self._body.library)
+        ))
 
     # def __init__(self):
     #     self._body = urwid.SimpleFocusListWalker([])
@@ -243,6 +360,12 @@ class Playlist(VimListBox):
             for i, item in enumerate(items)
         ])
 
+    def get_search_contents(self) -> Iterable[Tuple[str, int]]:
+        widgets = (widget.base_widget for widget in self._body)
+        return itertools.chain.from_iterable(
+            ((track.artist, i), (track.album, i), (track.track, i))
+            for i, track in enumerate(widgets)
+        )
 
 
 class Pane(urwid.WidgetWrap):
@@ -253,6 +376,9 @@ class Pane(urwid.WidgetWrap):
             footer=statusline,
         )
         super().__init__(widget)
+
+    def get_body(self):
+        return self._w.body
 
 
 class Window(urwid.Columns):
@@ -277,15 +403,25 @@ class TopLevel(urwid.WidgetWrap):
         widget = urwid.Frame(body=body, header=header, footer=footer)
         super().__init__(widget)
 
+    def focus_on(self, what: str):
+        self._w.set_focus(what)
+
     def focus_body(self):
-        self._w.set_focus('body')
+        self.focus_on('body')
 
     def keypress(self, size, key: str):
         if key == ':':
-            app.widget_by_name('command_prompt').start()
+            app.widget_by_name('command_prompt').start(
+                announce,
+                announce,
+            )
             self._w.set_focus('footer')
         else:
             return super().keypress(size, key)
+
+
+def announce(value):
+    LOG.info('Search/command received %s', value)
 
 
 def generate_palette() -> List[Tuple[str, str, str, str, str, str]]:
@@ -393,6 +529,7 @@ class Application(object):
         self.register_widget(command_prompt, 'command_prompt')
         self.register_widget(library, 'library')
         self.register_widget(playlist, 'playlist')
+        self.register_widget(window, 'window')
 
         top.focus_body()
 
