@@ -72,6 +72,8 @@ class Palette(NamedTuple):
     name: str
     fg: str
     bg: str
+    bold: bool = False
+    invert: bool = False
 
 
 class SimpleText(urwid.WidgetWrap):
@@ -223,10 +225,16 @@ class Playlist(VimListBox):
         client = await app.async_mpd()
         items = [item async for item in client.playlistinfo()]
 
+        playing_track = await client.currentsong()
+        playing_idx = int(playing_track['pos']) if playing_track else None
+
         self.set_contents([
-            urwid.AttrMap(PlaylistTrack.from_mpd_info(item), 'track', 'focus track')
-            for item in items
+            urwid.AttrMap(PlaylistTrack.from_mpd_info(item),
+                          'playing' if i == playing_idx else 'track',
+                          'focus playing' if i == playing_idx else 'focus track')
+            for i, item in enumerate(items)
         ])
+
 
 
 class Pane(urwid.WidgetWrap):
@@ -283,10 +291,25 @@ def generate_palette() -> List[Tuple[str, str, str, str, str, str]]:
         Palette(name='focus album', fg='#000', bg='#0ff'),
         Palette(name='track', fg='#000', bg='#fff'),
         Palette(name='focus track', fg='#000', bg='#0ff'),
+        Palette(name='playing', fg='#000', bg='#fff', bold=True),
+        Palette(name='focus playing', fg='#000', bg='#0ff', bold=True, invert=True),
     ]
 
-    return [(p.name, 'default', 'default', 'default', p.fg, p.bg)
-            for p in palette]
+    colors = (
+        (p, p.bg if p.invert else p.fg, p.fg if p.invert else p.bg)
+        for p in palette
+    )
+
+    return [
+        (
+            p.name,
+            'default',
+            'default',
+            'default',
+            f'bold,{fg}' if p.bold else fg,
+            bg,
+        ) for p, fg, bg in colors
+    ]
 
 
 class Application(object):

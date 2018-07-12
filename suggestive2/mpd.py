@@ -189,3 +189,7 @@ class MPDClient(object):
 
     async def playid(self, track_id: int) -> None:
         await self._run_list(f'playid {track_id}')
+
+    async def currentsong(self) -> Optional[Dict[str, str]]:
+        result = [track async for track in self._run_tagged('currentsong', 'file')]
+        return result[0] if result else None
