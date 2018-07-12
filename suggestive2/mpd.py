@@ -159,3 +159,6 @@ class MPDClient(object):
 
     async def clear(self) -> None:
         await self._run_list('clear')
+
+    async def pause(self) -> None:
+        await self._run_list('pause')
