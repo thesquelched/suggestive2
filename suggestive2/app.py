@@ -35,6 +35,11 @@ class LibraryListWalker(urwid.ListWalker):
         self.focus = focus
         self._modified()
 
+    def clear(self):
+        self.library[:] = []
+        self.contents[:] = []
+        self._modified()
+
     def get_next(self, current):
         return self._get(current + 1)
 
@@ -159,6 +164,9 @@ class Library(VimListBox):
     def __init__(self):
         self._body = LibraryListWalker()
         super().__init__(self._body)
+
+    def clear(self):
+        self._body.clear()
 
     # def __init__(self):
     #     self._body = urwid.SimpleFocusListWalker([])
@@ -433,7 +441,7 @@ async def mpd_idle(appref):
             if 'playlist' in subsystems or 'player' in subsystems:
                 app.run_coroutine(app.widget_by_name('playlist').sync, appref)
             if 'database' in subsystems:
-                pass
+                app.widget_by_name('library').clear()
 
 
 
