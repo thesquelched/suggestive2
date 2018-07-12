@@ -174,6 +174,9 @@ class VimListBox(urwid.ListBox):
         raise NotImplementedError
 
     def search_keypress(self, value: str) -> None:
+        if not value:
+            return
+
         assert len(value) != len(self.search_results)
 
         if len(value) < len(self.search_results):
