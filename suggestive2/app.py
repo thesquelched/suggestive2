@@ -396,6 +396,12 @@ class Window(urwid.Columns):
             app.loop.create_task(functools.partial(mpd_clear, weakref.ref(app))())
         elif key == 'p':
             app.loop.create_task(functools.partial(mpd_pause, weakref.ref(app))())
+        elif key == 'ctrl w':
+            idx = self.focus_col + 1
+            if idx >= len(self.contents):
+                idx = 0
+
+            self.focus_col = idx
         else:
             return super().keypress(size, key)
 
