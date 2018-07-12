@@ -123,6 +123,20 @@ class LibraryAlbum(urwid.WidgetWrap):
         widget = urwid.SelectableIcon(f'{artist} - {album}')
         super().__init__(widget)
 
+    def keypress(self, size, key: str):
+        if key == ' ':
+            app.run_coroutine(self.enqueue, weakref.ref(app))
+        else:
+            return super().keypress(size, key)
+
+    async def enqueue(self, appref):
+        app = appref()
+        if not app:
+            return
+
+        client = await app.async_mpd()
+        await client.searchadd(artist=self.artist, album=self.album)
+
 
 class Library(VimListBox):
 

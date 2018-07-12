@@ -162,3 +162,13 @@ class MPDClient(object):
 
     async def pause(self) -> None:
         await self._run_list('pause')
+
+    async def searchadd(self, **tags) -> None:
+        escaped = {key: value.replace('"', '\\"') for key, value in tags.items()}
+        command = ' '.join(itertools.chain(
+            ('searchadd',),
+            itertools.chain.from_iterable(
+                (key, f'"{value}"') for key, value in escaped.items()
+            ),
+        ))
+        await self._run_list(command)
