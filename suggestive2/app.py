@@ -145,13 +145,18 @@ class CommandPrompt(urwid.Edit):
 
 
 class VimListBox(urwid.ListBox):
-    REMAP = {
+    KEYBINDS = {
         'k': 'up',
         'j': 'down',
         'h': 'left',
         'l': 'right',
         'ctrl f': 'page down',
         'ctrl b': 'page up',
+        'G': 'end',
+    }
+
+    SEQUENCES: Dict[str, Union[str, Callable]] = {
+        'gg': 'home',
     }
 
     def __init__(self, body):
@@ -162,10 +167,21 @@ class VimListBox(urwid.ListBox):
         self.focus_position: int
 
     def keypress(self, size, key: str):
-        if key == '/':
+        sequence = app.key_buffer + key
+        LOG.info('Current sequence: %s', sequence)
+
+        if sequence in self.SEQUENCES:
+            app.clear_key_buffer()
+            binding = self.SEQUENCES[sequence]
+
+            if isinstance(binding, str):
+                return super().keypress(size, binding)
+            else:
+                binding(sequence)
+        elif key == '/':
             search_contents: Dict[str, Set[int]] = defaultdict(set)
-            for key, value in self.get_search_contents():
-                search_contents[key.lower()].add(value)
+            for text, value in self.get_search_contents():
+                search_contents[text.lower()].add(value)
 
             self.search_contents = search_contents
 
@@ -180,7 +196,7 @@ class VimListBox(urwid.ListBox):
         elif key == 'N':
             self.prev_search_match()
         else:
-            return super().keypress(size, self.REMAP.get(key, key))
+            return super().keypress(size, self.KEYBINDS.get(key, key))
 
     def get_search_contents(self) -> Iterable[Tuple[str, int]]:
         raise NotImplementedError
@@ -527,7 +543,7 @@ class Application(object):
             event_loop=urwid.AsyncioEventLoop(loop=self.loop),
         )
         self.mainloop.screen.set_terminal_properties(colors=256)
-        self.key_buffer: str = ''
+        self._key_buffer: str = ''
 
         self.buffer_sequences: Dict[str, Callable[[], Any]] = {
             'ZZ': self.exit,
@@ -535,7 +551,14 @@ class Application(object):
         self.mpd_lock = asyncio.Lock()
         self.mpd: MPDClient = None
 
-    def exit(self):
+    def clear_key_buffer(self) -> None:
+        self._key_buffer = ''
+
+    @property
+    def key_buffer(self) -> str:
+        return self._key_buffer
+
+    def exit(self) -> None:
         raise urwid.ExitMainLoop
 
     def register_widget(self, widget: urwid.Widget, name: str):
@@ -545,14 +568,15 @@ class Application(object):
         return self.widgets[name]
 
     def unhandled_input(self, key: str) -> bool:
+        LOG.info('Key %s was not handled', key)
         if key == 'esc':
-            self.key_buffer = ''
+            self.clear_key_buffer()
         else:
-            self.key_buffer += key
-            action = self.buffer_sequences.get(self.key_buffer)
+            self._key_buffer += key
+            action = self.buffer_sequences.get(self._key_buffer)
             if action is not None:
                 action()
-                self.key_buffer = ''
+                self.clear_key_buffer()
 
         return True
 
