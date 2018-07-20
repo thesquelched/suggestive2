@@ -9,6 +9,9 @@ import itertools
 from collections import defaultdict
 from typing import List, NamedTuple, Tuple, Dict, Callable, Union, Any, Set, Iterable, Optional
 
+from urwid.util import is_mouse_event
+from urwid.command_map import command_map, REDRAW_SCREEN
+
 from suggestive2.monkey import monkeypatch
 from suggestive2.mpd import MPDClient
 from suggestive2.types import Config
@@ -153,32 +156,26 @@ class VimListBox(urwid.ListBox):
         'ctrl f': 'page down',
         'ctrl b': 'page up',
         'G': 'end',
-    }
-
-    SEQUENCES: Dict[str, Union[str, Callable]] = {
         'gg': 'home',
     }
 
     def __init__(self, body):
         super().__init__(body)
+
+        self._command_map['k'] = self._command_map['up']
+        self._command_map['j'] = self._command_map['down']
+        self._command_map['ctrl f'] = self._command_map['page down']
+        self._command_map['ctrl b'] = self._command_map['page up']
+        self._command_map['G'] = self._command_map['end']
+        self._command_map['gg'] = self._command_map['home']
+
         self.search_contents: Dict[str, Set[int]] = {}
         self.search_results: List[List[str]] = []
         self.search_result: List[int] = []
         self.focus_position: int
 
     def keypress(self, size, key: str):
-        sequence = app.key_buffer + key
-        LOG.info('Current sequence: %s', sequence)
-
-        if sequence in self.SEQUENCES:
-            app.clear_key_buffer()
-            binding = self.SEQUENCES[sequence]
-
-            if isinstance(binding, str):
-                return super().keypress(size, binding)
-            else:
-                binding(sequence)
-        elif key == '/':
+        if key == '/':
             search_contents: Dict[str, Set[int]] = defaultdict(set)
             for text, value in self.get_search_contents():
                 search_contents[text.lower()].add(value)
@@ -196,7 +193,8 @@ class VimListBox(urwid.ListBox):
         elif key == 'N':
             self.prev_search_match()
         else:
-            return super().keypress(size, self.KEYBINDS.get(key, key))
+            # return super().keypress(size, self.KEYBINDS.get(key, key))
+            return super().keypress(size, key)
 
     def get_search_contents(self) -> Iterable[Tuple[str, int]]:
         raise NotImplementedError
@@ -529,13 +527,78 @@ def generate_palette() -> List[Tuple[str, str, str, str, str, str]]:
     ]
 
 
+class BufferedMainLoop(urwid.MainLoop):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._key_buffer: str = ''
+
+    @property
+    def key_buffer(self):
+        return self._key_buffer
+
+    def _clear_buffer(self):
+        self._key_buffer = ''
+
+    def process_input(self, keys):
+        if not self.screen_size:
+            self.screen_size = self.screen.get_cols_rows()
+
+        something_handled = False
+
+        remaining_keys = list(reversed(keys))
+        while remaining_keys:
+            key = remaining_keys.pop()
+            self._key_buffer += key
+
+            LOG.info('Unprocessed -> %s, key -> %s, buffer -> %s',
+                     remaining_keys, key, self._key_buffer)
+
+            if key == 'window resize':
+                LOG.info('Window resize')
+                continue
+            if is_mouse_event(key):
+                LOG.info('Mouse event')
+                event, button, col, row = key
+                if self._topmost_widget.mouse_event(self.screen_size, event, button, col, row,
+                                                    focus=True):
+                    result = None
+            elif self._topmost_widget.selectable():
+                result = self._topmost_widget.keypress(self.screen_size, self._key_buffer)
+                LOG.info('Widget keypress: %s', result)
+
+            if result:
+                if key == 'esc':
+                    LOG.info('Is escape')
+                    self._clear_buffer()
+                    something_handled = True
+                elif command_map[key] == REDRAW_SCREEN:
+                    LOG.info('Is redraw')
+                    self.screen.clear()
+                    something_handled = True
+                elif bool(self.unhandled_input(key)):
+                    LOG.info('Is unhandled, but handled')
+                    self._clear_buffer()
+                    something_handled = True
+                elif key.startswith('meta '):
+                    newkeys = [key[5:], 'esc']
+                    LOG.info('Is meta: %s -> %s', key, newkeys)
+                    remaining_keys.extend(newkeys)
+            else:
+                LOG.info('Was handled')
+                self._clear_buffer()
+                something_handled = True
+
+        return something_handled
+
+
 class Application(object):
 
     def __init__(self):
         self.config: Config = {}
         self.widgets: Dict[str, urwid.Widget] = dict()
         self.loop = asyncio.get_event_loop()
-        self.mainloop = urwid.MainLoop(
+        self.mainloop = BufferedMainLoop(
             self.build(),
             palette=generate_palette(),
             handle_mouse=False,
@@ -543,20 +606,9 @@ class Application(object):
             event_loop=urwid.AsyncioEventLoop(loop=self.loop),
         )
         self.mainloop.screen.set_terminal_properties(colors=256)
-        self._key_buffer: str = ''
 
-        self.buffer_sequences: Dict[str, Callable[[], Any]] = {
-            'ZZ': self.exit,
-        }
         self.mpd_lock = asyncio.Lock()
         self.mpd: MPDClient = None
-
-    def clear_key_buffer(self) -> None:
-        self._key_buffer = ''
-
-    @property
-    def key_buffer(self) -> str:
-        return self._key_buffer
 
     def exit(self) -> None:
         raise urwid.ExitMainLoop
@@ -568,15 +620,10 @@ class Application(object):
         return self.widgets[name]
 
     def unhandled_input(self, key: str) -> bool:
-        LOG.info('Key %s was not handled', key)
-        if key == 'esc':
-            self.clear_key_buffer()
+        if key == 'ZZ':
+            self.exit()
         else:
-            self._key_buffer += key
-            action = self.buffer_sequences.get(self._key_buffer)
-            if action is not None:
-                action()
-                self.clear_key_buffer()
+            return False
 
         return True
 
