@@ -22,12 +22,19 @@ LOG.addHandler(logging.NullHandler())
 
 monkeypatch()
 
+
 class LibraryListWalker(urwid.ListWalker):
 
     def __init__(self):
         self.library: List[Tuple[str, str]] = []
         self.contents: List[urwid.Widget] = []
         self.focus: int = 0
+
+    def positions(self, reverse=False):
+        if reverse:
+            return range(len(self.library) - 1, -1, -1)
+
+        return range(len(self.library))
 
     def get_focus(self):
         return self._get(self.focus)
@@ -123,12 +130,16 @@ class CommandPrompt(urwid.Edit):
             self.clear()
         elif key == 'enter':
             app.widget_by_name('top').focus_body()
-            self.complete_callback(self.get_edit_text())
+
+            if self.complete_callback is not None:
+                self.complete_callback(self.get_edit_text())
+
             self.clear()
         else:
             result = super().keypress(size, key)
 
-            self.keypress_callback(self.get_edit_text())
+            if self.keypress_callback is not None:
+                self.keypress_callback(self.get_edit_text())
 
             return result
 
@@ -148,10 +159,11 @@ class VimListBox(urwid.ListBox):
         self.search_contents: Dict[str, Set[int]] = {}
         self.search_results: List[List[str]] = []
         self.search_result: List[int] = []
+        self.focus_position: int
 
     def keypress(self, size, key: str):
         if key == '/':
-            search_contents = defaultdict(set)
+            search_contents: Dict[str, Set[int]] = defaultdict(set)
             for key, value in self.get_search_contents():
                 search_contents[key.lower()].add(value)
 
@@ -270,7 +282,6 @@ class LibraryAlbum(urwid.WidgetWrap):
                                  for track in reversed(tracks)
                                  if track['title'] == first['title'])
             await client.playid(int(last_track_id))
-
 
 
 class Library(VimListBox):
@@ -420,6 +431,7 @@ class Window(urwid.Columns):
 
     def __init__(self, panes: List[Pane]) -> None:
         super().__init__(panes, dividechars=1)
+        self.focus_col: int
 
     def keypress(self, size, key: str):
         if key == 'ctrl w':
@@ -515,14 +527,13 @@ class Application(object):
             event_loop=urwid.AsyncioEventLoop(loop=self.loop),
         )
         self.mainloop.screen.set_terminal_properties(colors=256)
-        self.key_buffer: List[str] = []
+        self.key_buffer: str = ''
 
-        self.buffer_sequences: Dict[Tuple[str, ...], Callable[[], Any]] = {
-            ('Z', 'Z'): self.exit,
+        self.buffer_sequences: Dict[str, Callable[[], Any]] = {
+            'ZZ': self.exit,
         }
         self.mpd_lock = asyncio.Lock()
         self.mpd: MPDClient = None
-
 
     def exit(self):
         raise urwid.ExitMainLoop
@@ -535,13 +546,13 @@ class Application(object):
 
     def unhandled_input(self, key: str) -> bool:
         if key == 'esc':
-            self.key_buffer.clear()
+            self.key_buffer = ''
         else:
-            self.key_buffer.append(key)
-            action = self.buffer_sequences.get(tuple(self.key_buffer))
+            self.key_buffer += key
+            action = self.buffer_sequences.get(self.key_buffer)
             if action is not None:
                 action()
-                self.key_buffer.clear()
+                self.key_buffer = ''
 
         return True
 
@@ -629,7 +640,6 @@ async def mpd_idle(appref):
                 app.widget_by_name('library').clear()
 
 
-
 def mpd_func(command):
     async def func(appref, *args, __command=command, **kwargs):
         app = appref()
@@ -645,7 +655,7 @@ def mpd_func(command):
 mpd_clear = mpd_func('clear')
 mpd_pause = mpd_func('pause')
 mpd_next = mpd_func('next')
-mpd_previous= mpd_func('previous')
+mpd_previous = mpd_func('previous')
 
 
 app = Application()

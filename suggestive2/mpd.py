@@ -22,7 +22,6 @@ def make_slice(start: Optional[int] = None, end: Optional[int] = None) -> str:
         return ''
 
 
-
 class MPDClient(object):
 
     def __init__(self, host: str = 'localhost', port: int = 6600) -> None:
@@ -141,7 +140,7 @@ class MPDClient(object):
 
                 yield line.decode().strip()
 
-    async def _run_list(self, *args, **kwargs) -> AsyncGenerator[str, str]:
+    async def _run_list(self, *args, **kwargs) -> List[str]:
         return [line async for line in self._run(*args, **kwargs)]
 
     async def _run_tagged(self,
@@ -180,7 +179,7 @@ class MPDClient(object):
             self,
             start: Optional[int] = None,
             end: Optional[int] = None
-        ) -> AsyncGenerator[Dict[str, str], str]:
+    ) -> AsyncGenerator[Dict[str, str], str]:
         spec = make_slice(start, end)
         command = f'playlistinfo {spec}' if spec else 'playlistinfo'
 
@@ -217,7 +216,7 @@ class MPDClient(object):
         ))
         await self._run_list(command)
 
-    async def playlistsearch(self, **tags) -> None:
+    async def playlistsearch(self, **tags) -> AsyncGenerator[Dict[str, str], str]:
         command = ' '.join(itertools.chain(
             ('playlistsearch',),
             itertools.chain.from_iterable(
